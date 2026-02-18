@@ -1,0 +1,65 @@
+name: Scrape & Train
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # cada 15 minutos
+    - cron: '0 2 * * *'      # training diario a las 2 AM
+  workflow_dispatch: {}
+
+jobs:
+  scrape:
+    name: Fetch latest draws
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install supabase beautifulsoup4 requests
+      - name: Run scraper
+        run: python app/ia/real_scraper.py
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      - name: Notify on success
+        if: success()
+        run: echo "✓ Scraper completado al $(date)"
+      - name: Notify on failure
+        if: failure()
+        run: echo "✗ Scraper falló" && exit 1
+
+  train:
+    name: Train ML model
+    needs: scrape
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 2 * * *'
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install supabase scikit-learn joblib numpy
+      - name: Train model
+        run: python app/ia/model_example.py
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v3
+        if: success()
+        with:
+          name: trained-models
+          path: app/ia/models/
+          retention-days: 30
